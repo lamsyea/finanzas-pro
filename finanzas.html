@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Finanzas Pro - IA Integrada</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: {
+                primary: '#93C5FD', secondary: '#111827', dark_card: '#1F2937', text_primary: '#F9FAFB', text_secondary: '#D1D5DB', success: '#10B981', danger: '#EF4444', warning: '#F59E0B'
+            }}}
+        }
+    </script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        input:disabled { opacity: 0.6; cursor: not-allowed; }
+    </style>
+</head>
+<body class="font-sans antialiased bg-secondary flex h-screen overflow-hidden text-gray-100">
+
+    <div class="flex-1 flex flex-col overflow-y-auto w-full">
+        <header class="bg-dark_card shadow-sm p-4 md:p-6 flex flex-wrap justify-between items-center z-30 sticky top-0 border-b border-gray-800 gap-2">
+            <h2 class="text-xl md:text-2xl font-bold text-text_primary">Presupuesto y Jineteo Pro <span class="text-xs text-blue-400 ml-2 animate-pulse" title="Sincronización en la nube activa">☁️ Sincronizado</span></h2>
+            
+            <div class="flex gap-2 items-center flex-wrap">
+                <button onclick="deshacerAccion()" class="bg-yellow-600 text-white px-3 py-1.5 rounded font-bold hover:bg-yellow-500 transition text-xs shadow-md hidden" id="btnUndo" title="Deshacer el último movimiento">
+                    ↩️ Deshacer
+                </button>
+                <button onclick="descargarRespaldo()" class="bg-blue-900/50 text-blue-400 border border-blue-800 px-3 py-1.5 rounded font-bold hover:bg-blue-900 transition text-xs shadow-md" title="Descargar copia de seguridad">
+                    💾 Descargar Datos
+                </button>
+                <button onclick="activarSubida()" class="bg-gray-800 text-gray-300 border border-gray-600 px-3 py-1.5 rounded font-bold hover:bg-gray-700 transition text-xs shadow-md" title="Cargar copia de seguridad a la Nube">
+                    📂 Cargar a Nube
+                </button>
+                <input type="file" id="fileRespaldo" accept=".json" class="hidden" onchange="cargarRespaldo(event)">
+            </div>
+        </header>
+
+        <main class="flex-1 p-4 md:p-8">
+
+            <div class="bg-dark_card p-4 md:p-5 rounded-xl shadow mb-6 border border-primary/40 flex flex-col sm:flex-row gap-3 items-center">
+                <span class="text-2xl hidden sm:block">🤖</span>
+                <input type="text" id="aiCommand" placeholder="Dile a la IA qué hacer... (Ej. 'Añade 500 a efectivo' o 'Gasto de 200 en Nu para cine')" class="flex-1 w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-600 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary placeholder-gray-500 text-sm">
+                <div class="flex gap-2 w-full sm:w-auto">
+                    <button onclick="procesarComandoIA()" id="btnSendIA" class="flex-1 sm:flex-none bg-blue-600 text-white font-bold px-6 py-3 rounded-lg hover:bg-blue-500 transition shadow">Ejecutar</button>
+                    <button onclick="configurarAPIKey()" class="bg-gray-700 text-gray-300 px-4 py-3 rounded-lg hover:bg-gray-600 transition" title="Configurar API Key de Gemini">⚙️</button>
+                </div>
+            </div>
+            
+            <div class="bg-dark_card p-6 rounded-xl shadow mb-6 border-t-4 border-success">
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                    <div>
+                        <p class="text-sm font-bold text-gray-400 uppercase tracking-wide">Liquidez Total</p>
+                        <p class="text-4xl font-black text-success mt-1" id="statLiquidez">$0.00</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="openModal('restar_efectivo')" class="bg-red-900/40 text-red-400 border border-red-800 px-4 py-2 rounded-lg font-bold text-sm hover:bg-red-900/60 transition shadow-sm">- Restar</button>
+                        <button onclick="openModal('liquidez')" class="bg-green-900/40 text-green-400 border border-green-800 px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-900/60 transition shadow-sm">+ Agregar</button>
+                    </div>
+                </div>
+                <div class="mt-4 pt-3 border-t border-gray-700">
+                    <p class="text-xs text-gray-400 flex flex-wrap gap-x-4 gap-y-2" id="liquidezBreakdown"></p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+                <div class="bg-dark_card p-4 rounded-xl shadow border-l-4 border-primary flex flex-col justify-center relative">
+                    <p class="text-xs text-gray-400">Ingreso Semanal</p>
+                    <p class="text-xl font-bold text-white cursor-pointer hover:text-blue-400 w-fit transition" onclick="editIngreso()" id="statIngreso">$0.00 ✏️</p>
+                </div>
+                <div class="bg-dark_card p-4 rounded-xl shadow border-l-4 border-warning flex flex-col justify-center relative">
+                    <p class="text-xs text-gray-400 flex justify-between items-center">
+                        Disponible Semanal
+                        <button onclick="resetGastosSemana()" title="Reiniciar semana" class="text-[10px] bg-yellow-900/50 text-yellow-400 px-2 rounded hover:bg-yellow-900 font-bold transition">Reset 🔄</button>
+                    </p>
+                    <p class="text-xl font-bold" id="statDisponible">$0.00</p>
+                    <p class="text-[9px] text-gray-500 mt-0.5">Dinero libre para extras</p>
+                </div>
+                <div class="bg-dark_card p-4 rounded-xl shadow border-l-4 border-orange-500 flex flex-col justify-center relative">
+                    <p class="text-xs text-gray-400 flex justify-between items-center">
+                        Pagos Fijos (Semana)
+                        <button onclick="openModal('editar_fijos', null)" class="text-[10px] bg-red-900/50 text-red-400 px-2 rounded hover:bg-red-900 font-bold transition">Editar ⚙️</button>
+                    </p>
+                    <p class="text-xl font-bold text-white" id="statObligaciones">$0.00</p>
+                    <p class="text-[9px] text-gray-500 mt-0.5" id="statObligacionesDetalle">Tarjetas: $0 | Fijos: $0</p>
+                </div>
+                <div class="bg-dark_card p-4 rounded-xl shadow border-l-4 border-danger flex flex-col justify-center relative">
+                    <div class="text-xs text-gray-400 flex justify-between items-center mb-1">
+                        Deuda Global
+                        <div class="flex gap-1">
+                            <button onclick="openModal('historial_global')" class="text-[10px] bg-gray-700 text-gray-300 px-2 py-1 rounded hover:bg-gray-600 font-bold transition shadow-sm">Historial 🕒</button>
+                            <button onclick="openModal('grafica')" class="text-[10px] bg-blue-900/50 text-blue-400 px-2 py-1 rounded hover:bg-blue-900 font-bold transition shadow-sm">Gráfica 📊</button>
+                        </div>
+                    </div>
+                    <p class="text-xl font-bold text-danger" id="statDeudaTotal">-$0.00</p>
+                    <p class="text-[9px] text-gray-500 mt-0.5">Suma de Deudas + MSI + Gastos</p>
+                </div>
+            </div>
+
+            <div id="platformsContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+        </main>
+    </div>
+
+    <div id="actionModal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50 p-4">
+        <div class="bg-dark_card border border-gray-700 p-6 rounded-xl shadow-2xl w-full max-w-sm flex flex-col max-h-[90vh]">
+            <h3 id="modalTitle" class="text-xl font-bold mb-4 text-white">Acción</h3>
+            <div id="modalInputs" class="space-y-4 overflow-y-auto custom-scrollbar pr-2 pb-2"></div>
+            <div class="mt-4 flex gap-3 pt-2 border-t border-gray-700 shrink-0">
+                <button onclick="closeModal()" id="btnCancel" class="flex-1 bg-gray-700 text-white py-2 rounded font-bold hover:bg-gray-600 transition">Cancelar</button>
+                <button id="modalSubmit" class="flex-1 bg-primary text-secondary py-2 rounded font-bold hover:bg-blue-400 transition">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURACIÓN DE FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBSf7iiRfvIRm-Qr-sPcxETVKCiZzlfoTw",
+            authDomain: "jineteo-pro.firebaseapp.com",
+            databaseURL: "https://jineteo-pro-default-rtdb.firebaseio.com",
+            projectId: "jineteo-pro",
+            storageBucket: "jineteo-pro.firebasestorage.app",
+            messagingSenderId: "976902691799",
+            appId: "1:976902691799:web:36d1ff6bc1841c1fe38992"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const formatC = (n) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+        let currentDay = new Date().getDate(); 
+
+        const DEFAULT_FINANZAS = {
+            ingresoSemanal: 5000, 
+            efectivoEnMano: 1200,
+            gastosEspontaneosSemana: 0,
+            gastosSemanalesFijos: [
+                { concepto: 'Agua Cespt', monto: 75 }, { concepto: 'Luz CFE', monto: 75 },
+                { concepto: 'Telnor', monto: 97.25 }, { concepto: 'Recarga Xochilt', monto: 40 },
+                { concepto: 'YouTube', monto: 40 }, { concepto: 'Carro', monto: 600 },
+                { concepto: 'Mandado', monto: 1500 }, { concepto: 'Gasolina', monto: 1000 }
+            ],
+            plataformas: [
+                { id: 'mercadopago', nombre: 'Mercado Pago', color: '#009EE3', cuentas: { debito: { balance: 1050 }, meliDolar: { balance: 0 }, credito: { activa: true, limite: 75000, deudaAlCorte: 2826, gastosPostCorte: 1642.32, fechaCorte: 21, fechaPago: 1, pagado: false, msi: [ { concepto: 'Compra 1', mensualidad: 98.92, mesesRestantes: 2 }, { concepto: 'Compra 2', mensualidad: 178.93, mesesRestantes: 4 }, { concepto: 'Compra 3', mensualidad: 65.86, mesesRestantes: 4 }, { concepto: 'Compra 4', mensualidad: 70.27, mesesRestantes: 3 }, { concepto: 'Compra 5', mensualidad: 48.66, mesesRestantes: 14 } ], transacciones: [{ concepto: 'Calimax', monto: 1642.32 }] } } },
+                { id: 'bbva', nombre: 'BBVA', color: '#004481', cuentas: { debito: { balance: 0 }, credito: { activa: true, limite: 160800, deudaAlCorte: 6188.61, gastosPostCorte: 344, fechaCorte: 20, fechaPago: 9, pagado: false, msi: [{ concepto: 'Préstamo Actual', mensualidad: 1001, mesesRestantes: 3 }, { concepto: 'Nuevo Préstamo', mensualidad: 1100, mesesRestantes: 24 }], transacciones: [{ concepto: 'Cine', monto: 176 }, { concepto: 'Café', monto: 168 }] } } },
+                { id: 'rappi', nombre: 'RappiCard', color: '#FF4600', cuentas: { credito: { activa: true, limite: 99635, deudaAlCorte: 2117.08, gastosPostCorte: 365, fechaCorte: 21, fechaPago: 10, pagado: false, msi: [], transacciones: [{ concepto: 'Agua', monto: 30 }, { concepto: 'Home Depot', monto: 86 }, { concepto: 'Pabellón', monto: 97 }, { concepto: 'Comida', monto: 152 }] } } },
+                { id: 'vexi', nombre: 'Vexi', color: '#00C2A8', cuentas: { credito: { activa: true, limite: 10107.15, deudaAlCorte: 0, gastosPostCorte: 4012.09, fechaCorte: 3, fechaPago: 18, pagado: true, msi: [{ concepto: 'Compra A', mensualidad: 41.58, mesesRestantes: 3 }, { concepto: 'Compra B', mensualidad: 92.55, mesesRestantes: 5 }, { concepto: 'Compra C', mensualidad: 14.24, mesesRestantes: 3 }], transacciones: [{ concepto: 'Petco', monto: 1304 }, { concepto: 'Gasolina', monto: 888.53 }, { concepto: 'Shein', monto: 649.4 }] } } },
+                { id: 'citibanamex', nombre: 'Citibanamex', color: '#002D72', cuentas: { credito: { activa: true, limite: 39616.67, deudaAlCorte: 0, gastosPostCorte: 3924.18, fechaCorte: 13, fechaPago: 2, pagado: true, msi: [{ concepto: 'MSI 1', mensualidad: 50, mesesRestantes: 3 }, { concepto: 'MSI 2', mensualidad: 50, mesesRestantes: 2 }, { concepto: 'MSI 3', mensualidad: 10, mesesRestantes: 1 }, { concepto: 'MSI 4', mensualidad: 346.34, mesesRestantes: 1 }, { concepto: 'MSI 5', mensualidad: 66.67, mesesRestantes: 3 }, { concepto: 'MSI 6', mensualidad: 50, mesesRestantes: 3 }], transacciones: [{ concepto: 'Mercado Pago', monto: 1197.11 }, { concepto: 'Calimax', monto: 1677.07 }] } } },
+                { id: 'nu', nombre: 'Nu', color: '#8A05BE', cuentas: { debito: { balance: 0 }, credito: { activa: true, limite: 16000, deudaAlCorte: 0, gastosPostCorte: 80, fechaCorte: 17, fechaPago: 1, pagado: true, msi: [], transacciones: [{ concepto: 'Tienda', monto: 80 }] } } },
+                { id: 'falabella', nombre: 'Falabella', color: '#B2D235', cuentas: { debito: { balance: 122 }, credito: { activa: true, limite: 90139.37, deudaAlCorte: 0, gastosPostCorte: 1386, fechaCorte: 16, fechaPago: 6, pagado: true, msi: [], transacciones: [{ concepto: 'Gasolina', monto: 625.4 }, { concepto: 'Minisu', monto: 329.6 }] } } }
+            ]
+        };
+
+        let finanzas = {};
+        let historialAcciones = [];
+        let undoStack = [];
+        window.deudaAcumuladaProyectada = 0;
+
+        // --- PERSISTENCIA Y SINCRONIZACIÓN EN LA NUBE ---
+        function initFirebase() {
+            db.ref('appData').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    finanzas = data.finanzas || JSON.parse(JSON.stringify(DEFAULT_FINANZAS));
+                    
+                    // PARCHE DE FIREBASE: Reconstruir arreglos vacíos que Firebase elimina automáticamente
+                    if (!finanzas.gastosSemanalesFijos) finanzas.gastosSemanalesFijos = [];
+                    if (finanzas.plataformas) {
+                        finanzas.plataformas.forEach(p => {
+                            if (p.cuentas.credito) {
+                                if (!p.cuentas.credito.msi) p.cuentas.credito.msi = [];
+                                if (!p.cuentas.credito.transacciones) p.cuentas.credito.transacciones = [];
+                            }
+                        });
+                    }
+                    
+                    historialAcciones = data.historial || [];
+                    undoStack = data.undo || [];
+                } else {
+                    finanzas = JSON.parse(JSON.stringify(DEFAULT_FINANZAS));
+                    historialAcciones = [];
+                    undoStack = [];
+                    saveData(); 
+                }
+                actualizarBotonDeshacer();
+                renderUI(); 
+            });
+        }
+
+        function saveData() {
+            db.ref('appData').set({
+                finanzas: finanzas,
+                historial: historialAcciones,
+                undo: undoStack
+            });
+        }
+
+        // --- SISTEMA DESHACER ---
+        function guardarSnapshot() {
+            undoStack.push(JSON.stringify(finanzas));
+            if (undoStack.length > 20) undoStack.shift(); 
+            actualizarBotonDeshacer();
+        }
+
+        function deshacerAccion() {
+            if(undoStack.length > 0) {
+                let lastState = undoStack.pop();
+                finanzas = JSON.parse(lastState);
+                actualizarBotonDeshacer();
+                registrarAccion("Se deshizo la última acción ↩️"); 
+            }
+        }
+
+        function actualizarBotonDeshacer() {
+            const btn = document.getElementById('btnUndo');
+            if(undoStack.length > 0) btn.classList.remove('hidden');
+            else btn.classList.add('hidden');
+        }
+
+        function registrarAccion(descripcion) {
+            const now = new Date();
+            const fechaTxt = now.toLocaleDateString('es-MX') + ' ' + now.toLocaleTimeString('es-MX', {hour: '2-digit', minute:'2-digit'});
+            historialAcciones.push({ fecha: fechaTxt, desc: descripcion });
+            saveData(); 
+        }
+
+        // --- SISTEMA DE RESPALDO (CONECTADO A FIREBASE) ---
+        function descargarRespaldo() {
+            const data = { finanzas: finanzas, historial: historialAcciones, undo: undoStack };
+            const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const fecha = new Date().toISOString().split('T')[0];
+            a.href = url;
+            a.download = `Respaldo_Finanzas_${fecha}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            registrarAccion("Se descargó una copia de seguridad manual.");
+        }
+
+        function activarSubida() {
+            document.getElementById('fileRespaldo').click();
+        }
+
+        function cargarRespaldo(event) {
+            const file = event.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if(data.finanzas) {
+                        db.ref('appData').set({
+                            finanzas: data.finanzas,
+                            historial: data.historial || [],
+                            undo: data.undo || []
+                        }).then(() => {
+                            alert("¡Respaldo subido a la Nube con éxito! Todos tus dispositivos se actualizarán al instante.");
+                            document.getElementById('fileRespaldo').value = "";
+                        });
+                    } else {
+                        alert("El archivo seleccionado no tiene el formato de finanzas correcto.");
+                    }
+                } catch(err) {
+                    alert("Error al leer el archivo. Asegúrate de que sea el archivo .json descargado previamente.");
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // --- IA GEMINI INTEGRATION ---
+        function configurarAPIKey() {
+            let actual = localStorage.getItem('geminiApiKey') || '';
+            let promptText = "Ingresa tu API Key de Gemini (Déjalo en blanco para borrar la actual):";
+            let key = prompt(promptText, actual);
+            if (key !== null) {
+                localStorage.setItem('geminiApiKey', key.trim());
+                if(key.trim() !== '') alert("API Key guardada exitosamente. ¡La IA está lista!");
+            }
+        }
+
+        async function procesarComandoIA() {
+            const input = document.getElementById('aiCommand');
+            const btn = document.getElementById('btnSendIA');
+            const comando = input.value.trim();
+            if(!comando) return;
+
+            let apiKey = localStorage.getItem('geminiApiKey');
+            if(!apiKey) {
+                apiKey = prompt("Para usar la IA, ingresa tu API Key de Gemini (se obtiene gratis en Google AI Studio):");
+                if(!apiKey) return;
+                localStorage.setItem('geminiApiKey', apiKey.trim());
+            }
+
+            input.disabled = true;
+            btn.disabled = true;
+            let tempValue = input.value;
+            input.value = "Pensando...";
+            btn.innerHTML = "⏳";
+
+            const tarjetasValidas = finanzas.plataformas.map(p => `'${p.id}'`).join(', ');
+
+            const promptText = `
+                Eres un asistente financiero estricto. El usuario te dará una orden y debes devolver SOLO un arreglo JSON con las acciones.
+                IDs de tarjetas válidos permitidos: ${tarjetasValidas}.
+                Tipos de origen/destino permitidos: 'efectivo', 'debito', 'meli', 'credito'.
+
+                Formatos obligatorios de los objetos dentro del arreglo JSON (usa exactamente estos 'action'):
+                - Añadir a efectivo físico: {"action": "ingreso_efectivo", "monto": N}
+                - Gastar de efectivo físico: {"action": "gasto_efectivo", "monto": N, "concepto": "X"}
+                - Depositar a Débito: {"action": "deposito_debito", "tarjeta_id": "ID", "monto": N}
+                - Depositar a Meli: {"action": "deposito_meli", "tarjeta_id": "ID", "monto": N}
+                - Transferir (entre cuentas): {"action": "transferencia", "origen_tipo": "TIPO", "origen_id": "ID", "destino_tipo": "TIPO", "destino_id": "ID", "monto": N} (Si es desde/hacia efectivo físico usa "origen_id":"efectivo")
+                - Gastar con tarjeta Crédito: {"action": "gasto_credito", "tarjeta_id": "ID", "monto": N, "concepto": "X"}
+                - Compra a MSI: {"action": "compra_msi", "tarjeta_id": "ID", "monto": N, "concepto": "X", "meses": N}
+                - Pagar deuda de tarjeta de crédito: {"action": "pago_deuda", "tarjeta_id": "ID_CREDITO_A_PAGAR", "origen_tipo": "TIPO_FONDOS", "origen_id": "ID_FONDOS", "monto": N}
+
+                Comando del usuario: "${comando}"
+
+                IMPORTANTE: Devuelve exclusivamente el texto JSON Array sin corchetes de markdown \`\`\`.
+            `;
+
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+                        generationConfig: { response_mime_type: "application/json", temperature: 0.1 }
+                    })
+                });
+
+                const data = await response.json();
+                if(data.error) throw new Error(data.error.message);
+
+                const jsonStr = data.candidates[0].content.parts[0].text;
+                let actions = JSON.parse(jsonStr);
+                
+                ejecutarAccionesIA(actions);
+                input.value = "";
+            } catch (error) {
+                alert("Error con la IA: " + error.message + "\n\nSi es un error de API, asegúrate de que tu llave es válida.");
+                input.value = tempValue;
+            } finally {
+                input.disabled = false;
+                btn.disabled = false;
+                btn.innerHTML = "Ejecutar";
+            }
+        }
+
+        function ejecutarAccionesIA(acciones) {
+            guardarSnapshot();
+            let descripciones = [];
+            let huboError = false;
+
+            acciones.forEach(act => {
+                try {
+                    if (act.action === 'ingreso_efectivo') {
+                        finanzas.efectivoEnMano += act.monto;
+                        descripciones.push(`IA: Ingreso de ${formatC(act.monto)} a Efectivo.`);
+                    } 
+                    else if (act.action === 'gasto_efectivo') {
+                        finanzas.efectivoEnMano -= act.monto;
+                        descripciones.push(`IA: Gasto en efectivo (${act.concepto}) por ${formatC(act.monto)}.`);
+                    } 
+                    else if (act.action === 'deposito_debito') {
+                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        card.cuentas.debito.balance += act.monto;
+                        descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Débito de ${card.nombre}.`);
+                    } 
+                    else if (act.action === 'deposito_meli') {
+                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        card.cuentas.meliDolar.balance += act.monto;
+                        descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Meli Dólar de ${card.nombre}.`);
+                    } 
+                    else if (act.action === 'transferencia') {
+                        if(act.origen_tipo === 'efectivo') finanzas.efectivoEnMano -= act.monto;
+                        else {
+                            let cardOrig = finanzas.plataformas.find(p => p.id === act.origen_id);
+                            if(act.origen_tipo === 'debito') cardOrig.cuentas.debito.balance -= act.monto;
+                            else if(act.origen_tipo === 'meli') cardOrig.cuentas.meliDolar.balance -= act.monto;
+                        }
+                        if(act.destino_tipo === 'efectivo') finanzas.efectivoEnMano += act.monto;
+                        else {
+                            let cardDest = finanzas.plataformas.find(p => p.id === act.destino_id);
+                            if(act.destino_tipo === 'debito') cardDest.cuentas.debito.balance += act.monto;
+                            else if(act.destino_tipo === 'meli') cardDest.cuentas.meliDolar.balance += act.monto;
+                            else if(act.destino_tipo === 'credito') applyPaymentToCredit(cardDest, act.monto);
+                        }
+                        descripciones.push(`IA: Transferencia de ${formatC(act.monto)}.`);
+                    } 
+                    else if (act.action === 'gasto_credito') {
+                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        card.cuentas.credito.transacciones.push({ concepto: act.concepto, monto: act.monto });
+                        card.cuentas.credito.gastosPostCorte += act.monto;
+                        finanzas.gastosEspontaneosSemana += act.monto; 
+                        descripciones.push(`IA: Gasto de ${formatC(act.monto)} en ${card.nombre} (${act.concepto}).`);
+                    } 
+                    else if (act.action === 'compra_msi') {
+                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        const mensualidad = act.monto / act.meses;
+                        card.cuentas.credito.transacciones.push({ concepto: `${act.concepto} (${act.meses} MSI)`, monto: act.monto });
+                        card.cuentas.credito.msi.push({ concepto: act.concepto, mensualidad: mensualidad, mesesRestantes: act.meses });
+                        card.cuentas.credito.gastosPostCorte += (act.monto - mensualidad);
+                        descripciones.push(`IA: Compra a ${act.meses} MSI en ${card.nombre} por ${formatC(act.monto)}.`);
+                    } 
+                    else if (act.action === 'pago_deuda') {
+                        if(act.origen_tipo === 'efectivo') finanzas.efectivoEnMano -= act.monto;
+                        else {
+                            let cardOrig = finanzas.plataformas.find(p => p.id === act.origen_id);
+                            if(act.origen_tipo === 'debito') cardOrig.cuentas.debito.balance -= act.monto;
+                            else if(act.origen_tipo === 'meli') cardOrig.cuentas.meliDolar.balance -= act.monto;
+                        }
+                        let cardDest = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        applyPaymentToCredit(cardDest, act.monto);
+                        descripciones.push(`IA: Abono a deuda de ${cardDest.nombre} por ${formatC(act.monto)}.`);
+                    }
+                } catch (e) {
+                    huboError = true;
+                    console.error("Error procesando accion:", act, e);
+                }
+            });
+
+            if (huboError) {
+                alert("Hubo un pequeño error al aplicar parte de los datos. Revisa el resultado o usa el botón 'Deshacer'.");
+            }
+            if (descripciones.length > 0) registrarAccion(descripciones.join(" | "));
+            else undoStack.pop(); 
+        }
+
+        // --- RENDERIZADO PRINCIPAL ---
+        function renderUI() {
+            let liquidezTotal = finanzas.efectivoEnMano;
+            let liquidezDetalles = `<span class="font-bold text-green-400">💵 Efectivo: ${formatC(finanzas.efectivoEnMano)}</span>`;
+            
+            let msiMensualTotal = 0;
+            window.deudaAcumuladaProyectada = 0;
+
+            const container = document.getElementById('platformsContainer');
+            container.innerHTML = '';
+
+            finanzas.plataformas.forEach(p => {
+                if(p.cuentas.debito) {
+                    liquidezTotal += p.cuentas.debito.balance;
+                    if(p.cuentas.debito.balance > 0) liquidezDetalles += `<span><span class="w-2 h-2 inline-block rounded-full mr-1" style="background-color: ${p.color};"></span>${p.nombre}: ${formatC(p.cuentas.debito.balance)}</span>`;
+                }
+                if(p.cuentas.meliDolar) {
+                    liquidezTotal += p.cuentas.meliDolar.balance;
+                    if(p.cuentas.meliDolar.balance > 0) liquidezDetalles += `<span><span class="w-2 h-2 inline-block rounded-full mr-1" style="background-color: #000000;"></span>Meli Dólar: ${formatC(p.cuentas.meliDolar.balance)}</span>`;
+                }
+            });
+            
+            document.getElementById('statLiquidez').textContent = formatC(liquidezTotal);
+            document.getElementById('liquidezBreakdown').innerHTML = liquidezDetalles;
+
+            finanzas.plataformas.sort((a, b) => {
+                let cA = a.cuentas.credito; let cB = b.cuentas.credito;
+                if (!cA && !cB) return 0; if (cA && !cB) return -1; if (!cA && cB) return 1;
+
+                let aVencida = cA.deudaAlCorte > 0 && !cA.pagado;
+                let bVencida = cB.deudaAlCorte > 0 && !cB.pagado;
+                if (aVencida && !bVencida) return -1; if (!aVencida && bVencida) return 1;
+
+                let aDeuda = cA.deudaAlCorte > 0; let bDeuda = cB.deudaAlCorte > 0;
+                if (aDeuda && !bDeuda) return -1; if (!aDeuda && bDeuda) return 1;
+
+                let diffA = (cA.fechaCorte - currentDay + 30) % 30;
+                let diffB = (cB.fechaCorte - currentDay + 30) % 30;
+                return diffA - diffB;
+            });
+
+            finanzas.plataformas.forEach(plat => {
+                let c = plat.cuentas.credito;
+                let cardHTML = '';
+
+                if (c) {
+                    let msiCardTotal = c.msi.reduce((a, b) => a + b.mensualidad, 0);
+                    msiMensualTotal += msiCardTotal;
+                    window.deudaAcumuladaProyectada += c.deudaAlCorte + c.gastosPostCorte + msiCardTotal;
+                    
+                    let disponible = c.limite - (c.deudaAlCorte + c.gastosPostCorte);
+                    let badgeStatus = (c.deudaAlCorte > 0 && !c.pagado) 
+                        ? `<span class="bg-red-500 text-white text-[10px] px-2 py-1 rounded font-bold tracking-widest animate-pulse shadow-md">POR PAGAR</span>` 
+                        : `<span class="bg-green-900/50 text-green-400 text-[10px] px-2 py-1 rounded font-bold border border-green-800">AL CORRIENTE</span>`;
+
+                    let postCorteHTML = msiCardTotal > 0 ? `
+                        <div class="bg-blue-900/10 p-2 rounded-lg flex-1 border border-blue-900 flex flex-col justify-center shadow-inner">
+                            <p class="text-[10px] font-bold text-blue-300 tracking-wide mb-1">PROYECCIÓN SIG. MES</p>
+                            <div class="text-[10px] text-gray-400 flex justify-between border-b border-blue-800 pb-1 mb-1">
+                                <span>Gastos:</span> <span class="font-medium">${formatC(c.gastosPostCorte)}</span>
+                            </div>
+                            <div class="text-[10px] text-gray-400 flex justify-between border-b border-blue-800 pb-1 mb-1">
+                                <span>+ MSI:</span> <span class="font-medium">${formatC(msiCardTotal)}</span>
+                            </div>
+                            <p class="text-right text-sm md:text-lg font-extrabold text-blue-400 leading-none mt-1">${formatC(c.gastosPostCorte + msiCardTotal)}</p>
+                        </div>
+                    ` : `
+                        <div class="bg-blue-900/10 p-3 rounded-lg flex-1 border border-blue-900 flex flex-col justify-center text-right shadow-inner">
+                            <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Gastos Actuales</p>
+                            <p class="text-lg font-extrabold text-blue-400 mt-1">${formatC(c.gastosPostCorte)}</p>
+                        </div>
+                    `;
+
+                    let debitoHTML = '';
+                    if (plat.cuentas.debito !== undefined) {
+                        debitoHTML += `
+                            <div class="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
+                                <span class="text-sm font-medium text-gray-400">Débito: <span class="${plat.cuentas.debito.balance > 0 ? 'text-success' : 'text-gray-400'} ml-1 font-bold">${formatC(plat.cuentas.debito.balance)}</span></span>
+                                <div class="flex gap-1">
+                                    <button onclick="openModal('debito', '${plat.id}')" class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition text-gray-200">Depositar</button>
+                                    <button onclick="openModal('transferir', '${plat.id}_debito')" class="text-[10px] bg-blue-900/30 text-blue-300 px-2 py-1 rounded transition border border-blue-800 hover:bg-blue-900/60">Transferir</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    if (plat.cuentas.meliDolar) {
+                        debitoHTML += `
+                            <div class="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
+                                <span class="text-sm font-medium text-gray-400">Meli Dólar: <span class="${plat.cuentas.meliDolar.balance > 0 ? 'text-success' : 'text-gray-400'} ml-1 font-bold">${formatC(plat.cuentas.meliDolar.balance)}</span></span>
+                                <div class="flex gap-1">
+                                    <button onclick="openModal('meli', '${plat.id}')" class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition text-gray-200">Depositar</button>
+                                    <button onclick="openModal('transferir', '${plat.id}_meli')" class="text-[10px] bg-blue-900/30 text-blue-300 px-2 py-1 rounded transition border border-blue-800 hover:bg-blue-900/60">Transferir</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    cardHTML = `
+                        <div class="bg-dark_card p-5 rounded-xl shadow border border-gray-700 flex flex-col justify-between hover:shadow-lg transition-shadow">
+                            <div>
+                                <div class="flex justify-between items-center mb-4">
+                                    <h4 class="text-lg font-bold text-text_primary flex items-center">
+                                        <span class="w-3 h-3 rounded-full mr-2" style="background-color: ${plat.color};"></span> ${plat.nombre}
+                                    </h4>
+                                    ${badgeStatus}
+                                </div>
+                                
+                                ${debitoHTML}
+
+                                <div class="flex gap-2 mt-3">
+                                    <div class="${c.deudaAlCorte > 0 ? 'bg-red-900/20 border border-red-800' : 'bg-gray-800 border border-transparent'} p-3 rounded-lg flex-1 shadow-inner flex flex-col justify-center relative">
+                                        <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Deuda al Corte</p>
+                                        <p class="text-lg font-extrabold ${c.deudaAlCorte > 0 ? 'text-danger' : 'text-gray-400'} leading-none mt-1 mb-1">${formatC(c.deudaAlCorte)}</p>
+                                        <p class="text-[9px] text-gray-400 leading-tight flex justify-between">
+                                            <span>Corta: ${c.fechaCorte} | Pago: ${c.fechaPago}</span>
+                                        </p>
+                                    </div>
+                                    ${postCorteHTML}
+                                </div>
+                                <p class="text-right text-[10px] text-gray-400 mt-2 font-medium mb-3">Límite Disp: ${formatC(disponible)}</p>
+
+                                <div class="flex gap-2 mb-2">
+                                    <button onclick="openModal('detalle', '${plat.id}')" class="flex-1 bg-gray-800 border border-gray-700 text-[10px] text-gray-300 py-1.5 rounded font-bold hover:bg-gray-700 transition">Historial 📋</button>
+                                    <button onclick="openModal('detalle_msi', '${plat.id}')" class="flex-1 bg-gray-800 border border-gray-700 text-[10px] text-gray-300 py-1.5 rounded font-bold hover:bg-gray-700 transition">MSI / Préstamos 💳</button>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2 mt-2 pt-2 border-t border-gray-700">
+                                <button onclick="openModal('gasto', '${plat.id}')" class="flex-1 bg-blue-900/40 text-blue-400 border border-blue-800 text-xs py-2 rounded font-bold hover:bg-blue-900/60 transition" title="Agregar Gasto">+ Gasto</button>
+                                <button onclick="openModal('msi', '${plat.id}')" class="flex-1 bg-yellow-900/40 text-yellow-400 border border-yellow-800 text-xs py-2 rounded font-bold hover:bg-yellow-900/60 transition" title="Nueva Compra a Meses">+ MSI</button>
+                                <button onclick="realizarCorte('${plat.id}')" class="flex-1 bg-purple-900/40 text-purple-400 border border-purple-800 text-xs py-2 rounded font-bold hover:bg-purple-900/60 transition" title="Realizar Corte Mensual">✂️ Corte</button>
+                                ${(c.deudaAlCorte > 0 || c.gastosPostCorte > 0) ? `<button onclick="openModal('pagar', '${plat.id}')" class="flex-1 bg-gray-700 text-white border border-gray-600 text-xs py-2 rounded font-bold hover:bg-gray-600 transition shadow">✓ Pagar</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+                container.insertAdjacentHTML('beforeend', cardHTML);
+            });
+
+            const msiSemanal = msiMensualTotal / 4;
+            const fijosSemanales = finanzas.gastosSemanalesFijos.reduce((sum, g) => sum + g.monto, 0);
+            const totalPagosSemanales = msiSemanal + fijosSemanales;
+            const disponibleSemanal = finanzas.ingresoSemanal - totalPagosSemanales - finanzas.gastosEspontaneosSemana;
+
+            document.getElementById('statIngreso').textContent = formatC(finanzas.ingresoSemanal) + " ✏️";
+            document.getElementById('statObligaciones').textContent = formatC(totalPagosSemanales);
+            document.getElementById('statObligacionesDetalle').textContent = `Tarjetas: ${formatC(msiSemanal)} | Fijos: ${formatC(fijosSemanales)}`;
+            document.getElementById('statDisponible').textContent = formatC(disponibleSemanal);
+            document.getElementById('statDisponible').className = `text-xl font-bold ${disponibleSemanal >= 0 ? 'text-success' : 'text-danger'}`;
+            document.getElementById('statDeudaTotal').textContent = "-" + formatC(window.deudaAcumuladaProyectada);
+        }
+
+        let modalActionType = '';
+        let modalActiveCard = '';
+
+        window.calculatePaymentSum = function() {
+            let total = 0;
+            document.querySelectorAll('.payment-source').forEach(input => {
+                total += parseFloat(input.value) || 0;
+            });
+            const textElement = document.getElementById('sumatoriaPago');
+            textElement.textContent = formatC(total);
+            textElement.className = "text-xl font-black text-blue-400";
+        }
+
+        function openModal(type, cardId) {
+            modalActionType = type;
+            modalActiveCard = cardId;
+            const baseCardId = cardId ? cardId.split('_')[0] : null; 
+            const card = baseCardId ? finanzas.plataformas.find(p => p.id === baseCardId) : null;
+            
+            let title = '';
+            let inputs = '';
+            
+            document.getElementById('modalSubmit').classList.remove('hidden');
+            document.getElementById('btnCancel').textContent = 'Cancelar';
+
+            if(type === 'historial_global') {
+                title = 'Historial de Auditoría 🕒';
+                inputs = historialAcciones.length === 0 ? `<p class="text-center text-gray-500 py-4">Aún no hay movimientos registrados.</p>` :
+                    `<div class="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar pr-2">` +
+                    historialAcciones.slice().reverse().map(h => `
+                        <div class="border-l-2 border-blue-500 pl-3 py-1 bg-gray-800 rounded-r">
+                            <p class="text-[10px] text-gray-400 font-bold mb-0.5">${h.fecha}</p>
+                            <p class="text-sm text-gray-300">${h.desc}</p>
+                        </div>
+                    `).join('') + `</div>`;
+                document.getElementById('modalSubmit').classList.add('hidden');
+                document.getElementById('btnCancel').textContent = 'Cerrar';
+            }
+            else if(type === 'grafica') {
+                title = 'Proyección de Deuda a 4 Semanas';
+                
+                let msiSemanal = finanzas.plataformas.reduce((acc, p) => p.cuentas.credito ? acc + (p.cuentas.credito.msi || []).reduce((a, b) => a + b.mensualidad, 0) : acc, 0) / 4;
+                let fijosSemanales = finanzas.gastosSemanalesFijos.reduce((sum, g) => sum + g.monto, 0);
+                let disp = finanzas.ingresoSemanal - (msiSemanal + fijosSemanales) - finanzas.gastosEspontaneosSemana;
+                
+                let semanas = [];
+                let maxDeuda = window.deudaAcumuladaProyectada;
+                for(let i=0; i<4; i++) {
+                    let proy = window.deudaAcumuladaProyectada - (disp * i);
+                    if(proy < 0) proy = 0; 
+                    if(proy > maxDeuda) maxDeuda = proy;
+                    semanas.push(proy);
+                }
+                
+                let barsHTML = semanas.map((val, i) => {
+                    let height = maxDeuda > 0 ? (val / maxDeuda) * 100 : 0;
+                    let color = disp >= 0 ? 'bg-green-500' : 'bg-red-500';
+                    return `
+                        <div class="flex flex-col items-center justify-end h-40">
+                            <span class="text-[10px] text-gray-400 mb-1 font-bold">${formatC(val)}</span>
+                            <div class="w-12 sm:w-16 ${color} rounded-t-md transition-all duration-500 shadow" style="height: ${height}%;"></div>
+                            <span class="text-xs font-bold mt-2 text-gray-400">Sem ${i+1}</span>
+                        </div>
+                    `;
+                }).join('');
+
+                let statusMsg = disp >= 0 
+                    ? `<p class="text-sm text-green-400 font-bold mb-4 bg-green-900/30 p-2 rounded border border-green-800">¡Excelente ritmo! Tu deuda se reduce en ${formatC(disp)} por semana.</p>` 
+                    : `<p class="text-sm text-red-400 font-bold mb-4 bg-red-900/30 p-2 rounded border border-red-800">Cuidado: Tu deuda proyectada está creciendo ${formatC(Math.abs(disp))} por semana.</p>`;
+
+                inputs = `
+                    ${statusMsg}
+                    <div class="flex justify-around items-end bg-gray-800 p-4 rounded-xl border border-gray-700 h-56 mt-4">
+                        ${barsHTML}
+                    </div>
+                `;
+                document.getElementById('modalSubmit').classList.add('hidden');
+                document.getElementById('btnCancel').textContent = 'Cerrar';
+            }
+            else if(type === 'liquidez') {
+                title = `Agregar a Efectivo Físico`;
+                inputs = `
+                    <div class="mb-4 text-center">
+                        <p class="text-xs text-gray-500 uppercase">Efectivo Actual</p>
+                        <p class="text-3xl font-black text-success">${formatC(finanzas.efectivoEnMano)}</p>
+                    </div>
+                    <input type="number" id="inputMonto" placeholder="Monto a sumar (Ej. 500)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-success">
+                `;
+            }
+            else if(type === 'restar_efectivo') {
+                title = `Retirar Efectivo Físico`;
+                inputs = `
+                    <div class="mb-4 text-center">
+                        <p class="text-xs text-gray-500 uppercase">Efectivo Actual</p>
+                        <p class="text-3xl font-black text-danger">${formatC(finanzas.efectivoEnMano)}</p>
+                    </div>
+                    <input type="text" id="inputMotivoEfectivo" placeholder="Motivo del gasto (Ej. Tacos, Propina)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3 focus:outline-none focus:ring-1 focus:ring-red-500">
+                    <input type="number" id="inputMonto" placeholder="Monto a restar (Ej. 200)" max="${finanzas.efectivoEnMano}" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-red-500">
+                `;
+            }
+            else if(type === 'debito') {
+                title = `Añadir saldo a débito de ${card.nombre}`;
+                inputs = `<input type="number" id="inputMonto" placeholder="Monto a sumar (Ej. 500)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">`;
+            } 
+            else if(type === 'meli') {
+                title = `Añadir a Meli Dólar de ${card.nombre}`;
+                inputs = `<input type="number" id="inputMonto" placeholder="Monto a sumar (Ej. 500)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">`;
+            }
+            else if (type === 'transferir') {
+                let subType = cardId.split('_')[1]; 
+                let accountName = subType === 'meli' ? 'Meli Dólar' : 'Débito';
+                let balance = subType === 'meli' ? card.cuentas.meliDolar.balance : card.cuentas.debito.balance;
+
+                title = `Transferir desde ${card.nombre} (${accountName})`;
+
+                let destOptions = '';
+                finanzas.plataformas.forEach(p => {
+                    if (p.cuentas.debito && `${p.id}_debito` !== cardId) destOptions += `<option value="${p.id}_debito">💳 ${p.nombre} (Débito)</option>`;
+                    if (p.cuentas.meliDolar && `${p.id}_meli` !== cardId) destOptions += `<option value="${p.id}_meli">💲 ${p.nombre} (Meli Dólar)</option>`;
+                    if (p.cuentas.credito && (p.cuentas.credito.deudaAlCorte > 0 || p.cuentas.credito.gastosPostCorte > 0)) {
+                        destOptions += `<option value="${p.id}_credito">⚠️ Pagar Deuda de ${p.nombre} (Crédito)</option>`;
+                    }
+                });
+
+                inputs = `
+                    <div class="mb-4 bg-gray-800 p-3 rounded-lg text-center shadow-inner">
+                        <p class="text-xs text-gray-400 uppercase">Saldo Disponible para enviar</p>
+                        <p class="text-2xl font-black text-blue-400">${formatC(balance)}</p>
+                    </div>
+                    <label class="block text-sm font-bold text-gray-300 mb-1">Monto a Transferir:</label>
+                    <input type="number" id="inputMonto" placeholder="Ej. 1000" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3" max="${balance}">
+                    <label class="block text-sm font-bold text-gray-300 mb-1">Cuenta Destino:</label>
+                    <select id="selectDestino" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600">
+                        ${destOptions}
+                    </select>
+                `;
+            }
+            else if (type === 'pagar') {
+                title = `Pagar Deuda - ${card.nombre}`;
+                
+                let origenes = [{ id: 'efectivo', nombre: '💵 Efectivo Físico', saldo: finanzas.efectivoEnMano }];
+                finanzas.plataformas.forEach(p => {
+                    if (p.cuentas.debito && p.cuentas.debito.balance > 0) origenes.push({ id: `${p.id}_debito`, nombre: `💳 ${p.nombre} (Débito)`, saldo: p.cuentas.debito.balance });
+                    if (p.cuentas.meliDolar && p.cuentas.meliDolar.balance > 0) origenes.push({ id: `${p.id}_meli`, nombre: `💲 ${p.nombre} (Meli Dólar)`, saldo: p.cuentas.meliDolar.balance });
+                });
+
+                inputs = `
+                    <div class="mb-4 bg-blue-900/20 p-3 rounded-lg text-center shadow-inner flex justify-around">
+                        <div>
+                            <p class="text-[10px] text-gray-500 uppercase">Al Corte</p>
+                            <p class="text-lg font-bold text-red-500">${formatC(card.cuentas.credito.deudaAlCorte)}</p>
+                        </div>
+                        <div class="border-l border-blue-800"></div>
+                        <div>
+                            <p class="text-[10px] text-gray-500 uppercase">Actual (Post-Corte)</p>
+                            <p class="text-lg font-bold text-gray-300">${formatC(card.cuentas.credito.gastosPostCorte)}</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-2">Ingresa cuánto dinero tomarás de cada cuenta para abonar a la tarjeta.</p>
+                    <div class="space-y-3 max-h-[35vh] overflow-y-auto custom-scrollbar pr-2">
+                `;
+                
+                origenes.forEach(o => {
+                    inputs += `
+                        <div class="flex justify-between items-center bg-gray-800 p-2.5 rounded-lg border border-gray-700">
+                            <div>
+                                <p class="text-sm font-bold text-white">${o.nombre}</p>
+                                <p class="text-[10px] text-gray-400">Disp: <span class="font-bold text-success">${formatC(o.saldo)}</span></p>
+                            </div>
+                            <input type="number" class="w-24 p-2 border rounded-md text-right font-bold payment-source bg-gray-900 border-gray-600 text-white" data-id="${o.id}" data-max="${o.saldo}" placeholder="$0" oninput="calculatePaymentSum()">
+                        </div>
+                    `;
+                });
+
+                inputs += `
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-700 flex justify-between items-center">
+                        <span class="text-sm font-bold text-gray-400 uppercase">Abono Total:</span>
+                        <span class="text-xl font-black text-gray-500 transition-colors" id="sumatoriaPago">$0.00</span>
+                    </div>
+                `;
+            }
+            else if (type === 'gasto') {
+                title = `Nuevo gasto en ${card.nombre}`;
+                inputs = `
+                    <div class="mb-3">
+                        <label for="conceptSelectionMode" class="block text-gray-300 text-sm font-bold mb-2">Seleccionar Concepto:</label>
+                        <select id="conceptSelectionMode" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600">
+                            <option value="manual">Ingresar manualmente</option>
+                            <option value="fixed">Seleccionar de pagos fijos</option>
+                        </select>
+                    </div>
+                    <div id="manualConceptInput">
+                        <input type="text" id="inputConcepto" placeholder="¿En qué gastaste? (Ej. Cine)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                    </div>
+                    <div id="fixedConceptDropdown" class="hidden">
+                        <select id="selectFixedExpense" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                            <option value="">-- Seleccionar pago fijo --</option>
+                            ${finanzas.gastosSemanalesFijos.map(gasto => `<option value="${gasto.concepto}">${gasto.concepto}</option>`).join('')}
+                        </select>
+                    </div>
+                    <input type="number" id="inputMonto" placeholder="Monto total del gasto" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600">
+                    <p class="text-xs text-gray-500 mt-2">* Gastos de tu lista de básicos no afectarán tu Disponible Semanal.</p>`;
+
+                setTimeout(() => { 
+                    const mode = document.getElementById('conceptSelectionMode');
+                    mode.addEventListener('change', (e) => {
+                        if (e.target.value === 'manual') {
+                            document.getElementById('manualConceptInput').classList.remove('hidden');
+                            document.getElementById('fixedConceptDropdown').classList.add('hidden');
+                            document.getElementById('inputConcepto').value = ''; 
+                        } else {
+                            document.getElementById('manualConceptInput').classList.add('hidden');
+                            document.getElementById('fixedConceptDropdown').classList.remove('hidden');
+                            document.getElementById('inputConcepto').value = document.getElementById('selectFixedExpense').value; 
+                        }
+                    });
+                    document.getElementById('selectFixedExpense').addEventListener('change', (e) => {
+                        document.getElementById('inputConcepto').value = e.target.value;
+                    });
+                }, 0);
+            }
+            else if (type === 'msi') {
+                title = `Nueva compra a MSI en ${card.nombre}`;
+                inputs = `
+                    <input type="text" id="inputConcepto" placeholder="Concepto (Ej. Laptop)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                    <input type="number" id="inputMonto" placeholder="Costo Total" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                    <select id="inputMeses" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600">
+                        <option value="3">3 Meses</option><option value="6">6 Meses</option><option value="9">9 Meses</option>
+                        <option value="12">12 Meses</option><option value="18">18 Meses</option><option value="24">24 Meses</option>
+                    </select>`;
+            }
+            else if (type === 'detalle') {
+                title = `Historial de ${card.nombre}`;
+                let txs = card.cuentas.credito.transacciones;
+                inputs = txs.length === 0 ? `<p class="text-center text-gray-500 py-4">Sin movimientos.</p>` :
+                    txs.slice().reverse().map((t, index) => `
+                        <div class="flex justify-between items-center py-2 border-b border-gray-700 last:border-0">
+                            <span class="text-sm font-medium text-gray-300">${t.concepto}</span>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-sm font-bold text-white">${formatC(t.monto)}</span>
+                                <button onclick="deleteTransaction('${baseCardId}', ${txs.length - 1 - index})" class="text-red-500 hover:text-red-400 focus:outline-none p-1">
+                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1H9a1 1 0 00-1 1v3m-3 0h14"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                document.getElementById('modalSubmit').classList.add('hidden');
+                document.getElementById('btnCancel').textContent = 'Cerrar';
+            }
+            else if (type === 'detalle_msi') {
+                title = `MSI y Préstamos de ${card.nombre}`;
+                let msi = card.cuentas.credito.msi;
+                inputs = msi.length === 0 ? `<p class="text-center text-gray-500 py-4">No tienes deudas a meses aquí.</p>` :
+                    msi.map((m, index) => `
+                        <div class="flex justify-between items-center py-3 border-b border-gray-700 last:border-0">
+                            <div>
+                                <p class="text-sm font-bold text-gray-300">${m.concepto}</p>
+                                <p class="text-[10px] text-gray-500">Restan ${m.mesesRestantes} pagos</p>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <span class="text-sm font-bold text-danger">${formatC(m.mensualidad)} /mes</span>
+                                <button onclick="deleteMsiItem('${baseCardId}', ${index})" class="text-red-500 hover:text-red-400 focus:outline-none p-1">
+                                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1H9a1 1 0 00-1 1v3m-3 0h14"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                document.getElementById('modalSubmit').classList.add('hidden');
+                document.getElementById('btnCancel').textContent = 'Cerrar';
+            }
+            else if (type === 'editar_fijos') {
+                title = "Gastos Básicos Semanales";
+                inputs = `<div id="listaFijosContainer" class="space-y-2 mb-4">` +
+                    finanzas.gastosSemanalesFijos.map((g, i) => `
+                        <div class="flex gap-2 items-center">
+                            <input type="text" id="fijoConcepto-${i}" value="${g.concepto}" disabled class="flex-1 p-2 border rounded text-sm bg-gray-900 text-gray-400 border-gray-700">
+                            <input type="number" id="fijoMonto-${i}" value="${g.monto}" disabled class="w-24 p-2 border rounded text-sm bg-gray-900 text-gray-400 border-gray-700 text-right">
+                            <button id="editFijoBtn-${i}" onclick="toggleEditFijo(${i})" class="text-blue-500 px-2 font-bold hover:text-blue-400 rounded transition">Editar</button>
+                            <button onclick="eliminarFijo(${i})" class="text-red-500 px-2 font-bold hover:text-red-400 rounded transition">X</button>
+                        </div>
+                    `).join('') + `</div>
+                    <div class="flex gap-2 items-center border-t pt-4 border-gray-700">
+                        <input type="text" id="nuevoFijoNombre" placeholder="Nombre" class="flex-1 p-2 border rounded text-sm bg-gray-800 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 border-gray-600">
+                        <input type="number" id="nuevoFijoMonto" placeholder="$ Monto" class="w-24 p-2 border rounded text-sm bg-gray-800 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 border-gray-600">
+                        <button onclick="agregarFijo()" class="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded text-sm font-bold transition">+</button>
+                    </div>
+                `;
+                document.getElementById('modalSubmit').classList.add('hidden');
+                document.getElementById('btnCancel').textContent = 'Cerrar Guardando';
+            }
+
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalInputs').innerHTML = inputs;
+            if(type !== 'grafica' && type !== 'historial_global') document.getElementById('actionModal').classList.remove('hidden');
+            else document.getElementById('actionModal').classList.remove('hidden');
+            
+            document.getElementById('modalSubmit').onclick = executeAction;
+        }
+
+        function closeModal() {
+            document.getElementById('actionModal').classList.add('hidden');
+            renderUI();
+        }
+
+        function applyPaymentToCredit(card, amount) {
+            let remaining = amount;
+            if (card.cuentas.credito.deudaAlCorte > 0) {
+                if (remaining >= card.cuentas.credito.deudaAlCorte) {
+                    remaining -= card.cuentas.credito.deudaAlCorte;
+                    card.cuentas.credito.deudaAlCorte = 0;
+                } else {
+                    card.cuentas.credito.deudaAlCorte -= remaining;
+                    remaining = 0;
+                }
+            }
+            if (remaining > 0 && card.cuentas.credito.gastosPostCorte > 0) {
+                if (remaining >= card.cuentas.credito.gastosPostCorte) {
+                    card.cuentas.credito.gastosPostCorte = 0;
+                } else {
+                    card.cuentas.credito.gastosPostCorte -= remaining;
+                }
+            }
+            if (card.cuentas.credito.deudaAlCorte === 0) card.cuentas.credito.pagado = true;
+        }
+
+        function executeAction() {
+            guardarSnapshot(); 
+            const baseCardId = modalActiveCard ? modalActiveCard.split('_')[0] : null;
+            const card = baseCardId ? finanzas.plataformas.find(p => p.id === baseCardId) : null;
+            
+            if (modalActionType === 'liquidez') {
+                const monto = parseFloat(document.getElementById('inputMonto')?.value);
+                if(!isNaN(monto) && monto > 0) {
+                    finanzas.efectivoEnMano += monto;
+                    registrarAccion(`Se ingresaron ${formatC(monto)} a Efectivo Físico.`);
+                }
+            }
+            else if (modalActionType === 'restar_efectivo') {
+                const monto = parseFloat(document.getElementById('inputMonto')?.value);
+                const motivo = document.getElementById('inputMotivoEfectivo')?.value || 'Retiro de efectivo';
+                if(!isNaN(monto) && monto > 0 && monto <= finanzas.efectivoEnMano) {
+                    finanzas.efectivoEnMano -= monto;
+                    registrarAccion(`Gasto en efectivo: ${motivo} por ${formatC(monto)}.`);
+                } else {
+                    undoStack.pop();
+                    alert("Monto inválido o superior al efectivo que tienes en mano."); return;
+                }
+            }
+            else if (modalActionType === 'debito') {
+                const monto = parseFloat(document.getElementById('inputMonto')?.value);
+                if(!isNaN(monto) && monto > 0) {
+                    card.cuentas.debito.balance += monto;
+                    registrarAccion(`Se depositaron ${formatC(monto)} en Débito de ${card.nombre}.`);
+                }
+            }
+            else if (modalActionType === 'meli') {
+                const monto = parseFloat(document.getElementById('inputMonto')?.value);
+                if(!isNaN(monto) && monto > 0) {
+                    card.cuentas.meliDolar.balance += monto;
+                    registrarAccion(`Se ingresaron ${formatC(monto)} a Meli Dólar en ${card.nombre}.`);
+                }
+            }
+            else if (modalActionType === 'transferir') {
+                const monto = parseFloat(document.getElementById('inputMonto').value);
+                const destId = document.getElementById('selectDestino').value;
+                const sourceSubType = modalActiveCard.split('_')[1]; 
+                
+                let sourceBalance = sourceSubType === 'meli' ? card.cuentas.meliDolar.balance : card.cuentas.debito.balance;
+
+                if (isNaN(monto) || monto <= 0) { undoStack.pop(); alert('Ingresa un monto válido.'); return; }
+                if (monto > sourceBalance) { undoStack.pop(); alert('No tienes suficientes fondos.'); return; }
+
+                if (sourceSubType === 'meli') card.cuentas.meliDolar.balance -= monto;
+                else card.cuentas.debito.balance -= monto;
+
+                const destBaseId = destId.split('_')[0];
+                const destSubType = destId.split('_')[1]; 
+                const destCard = finanzas.plataformas.find(p => p.id === destBaseId);
+                const sourceName = sourceSubType === 'meli' ? `${card.nombre} (Meli Dólar)` : `${card.nombre} (Débito)`;
+
+                if (destSubType === 'debito') {
+                    destCard.cuentas.debito.balance += monto;
+                    registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Débito de ${destCard.nombre}.`);
+                }
+                else if (destSubType === 'meli') {
+                    destCard.cuentas.meliDolar.balance += monto;
+                    registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Meli Dólar de ${destCard.nombre}.`);
+                }
+                else if (destSubType === 'credito') {
+                    applyPaymentToCredit(destCard, monto);
+                    registrarAccion(`Pago de deuda por ${formatC(monto)} a ${destCard.nombre} con fondos de ${sourceName}.`);
+                }
+            }
+            else if (modalActionType === 'pagar') {
+                let totalSuma = 0;
+                let pagosDeducir = [];
+                let errorFound = false;
+                
+                document.querySelectorAll('.payment-source').forEach(input => {
+                    let val = parseFloat(input.value) || 0;
+                    if(val > 0) {
+                        let id = input.getAttribute('data-id'); 
+                        let maxSaldo = parseFloat(input.getAttribute('data-max'));
+                        if(val > maxSaldo) {
+                            alert(`Error: Saldo insuficiente en la cuenta marcada.`);
+                            errorFound = true;
+                        }
+                        totalSuma += val;
+                        pagosDeducir.push({id: id, monto: val});
+                    }
+                });
+
+                if (errorFound) { undoStack.pop(); return; }
+                if (totalSuma <= 0) { undoStack.pop(); alert("Ingresa algún monto a pagar."); return; }
+                
+                let totalDeuda = card.cuentas.credito.deudaAlCorte + card.cuentas.credito.gastosPostCorte;
+                if (totalSuma > totalDeuda) {
+                    undoStack.pop();
+                    alert(`El abono (${formatC(totalSuma)}) es mayor a tu deuda actual (${formatC(totalDeuda)}).`);
+                    return;
+                }
+
+                let origenesUsados = [];
+
+                pagosDeducir.forEach(pago => {
+                    if (pago.id === 'efectivo') {
+                        finanzas.efectivoEnMano -= pago.monto;
+                        origenesUsados.push(`Efectivo (${formatC(pago.monto)})`);
+                    } else {
+                        let platId = pago.id.split('_')[0];
+                        let subType = pago.id.split('_')[1];
+                        let cuentaInfo = finanzas.plataformas.find(p => p.id === platId);
+                        
+                        if (subType === 'debito') {
+                            cuentaInfo.cuentas.debito.balance -= pago.monto;
+                            origenesUsados.push(`${cuentaInfo.nombre} Débito (${formatC(pago.monto)})`);
+                        }
+                        if (subType === 'meli') {
+                            cuentaInfo.cuentas.meliDolar.balance -= pago.monto;
+                            origenesUsados.push(`${cuentaInfo.nombre} Meli (${formatC(pago.monto)})`);
+                        }
+                    }
+                });
+
+                applyPaymentToCredit(card, totalSuma);
+                registrarAccion(`Se abonó ${formatC(totalSuma)} a la deuda de ${card.nombre}. Fondos tomados de: ${origenesUsados.join(', ')}.`);
+            }
+            else {
+                const monto = parseFloat(document.getElementById('inputMonto')?.value);
+                if(isNaN(monto) || monto <= 0) { undoStack.pop(); alert('Ingresa un monto válido.'); return; }
+
+                if (modalActionType === 'gasto') {
+                    let concepto = document.getElementById('inputConcepto').value;
+                    if (document.getElementById('conceptSelectionMode').value === 'fixed' && !concepto) {
+                        concepto = document.getElementById('selectFixedExpense').value;
+                    }
+                    if(!concepto) concepto = 'Gasto Extra';
+
+                    let c = card.cuentas.credito;
+                    c.transacciones.push({ concepto: concepto, monto: monto });
+                    c.gastosPostCorte += monto; 
+
+                    const isPlanned = finanzas.gastosSemanalesFijos.some(g => concepto.toLowerCase().includes(g.concepto.toLowerCase()));
+                    if (!isPlanned) { finanzas.gastosEspontaneosSemana += monto; }
+
+                    registrarAccion(`Gasto registrado en ${card.nombre}: ${concepto} por ${formatC(monto)}.`);
+                }
+                else if (modalActionType === 'msi') {
+                    let concepto = document.getElementById('inputConcepto').value || 'Compra a MSI';
+                    const meses = parseInt(document.getElementById('inputMeses').value);
+                    const mensualidad = monto / meses;
+                    let c = card.cuentas.credito;
+
+                    c.transacciones.push({ concepto: `${concepto} (${meses} MSI)`, monto: monto });
+                    c.msi.push({ concepto: concepto, mensualidad: mensualidad, mesesRestantes: meses });
+                    c.gastosPostCorte += (monto - mensualidad);
+
+                    registrarAccion(`Compra a ${meses} MSI en ${card.nombre}: ${concepto} por ${formatC(monto)}.`);
+                }
+            }
+            closeModal();
+        }
+
+        window.realizarCorte = function(cardId) {
+            const card = finanzas.plataformas.find(p => p.id === cardId);
+            let c = card.cuentas.credito;
+            if(confirm(`¿Realizar corte para ${card.nombre}?\n\nEsto moverá tus Gastos Actuales a Deuda al Corte y avanzará un mes tus compras a MSI.`)) {
+                guardarSnapshot();
+                let msiMes = c.msi.reduce((acc, m) => acc + m.mensualidad, 0);
+                c.deudaAlCorte += c.gastosPostCorte + msiMes;
+                c.gastosPostCorte = 0;
+                c.pagado = false;
+                
+                c.msi.forEach(m => m.mesesRestantes--);
+                c.msi = c.msi.filter(m => m.mesesRestantes > 0);
+                
+                registrarAccion(`Corte mensual realizado en ${card.nombre}. Nueva deuda al corte: ${formatC(c.deudaAlCorte)}`);
+            }
+        }
+
+        window.eliminarFijo = function(index) {
+            if (confirm("¿Estás seguro de que quieres eliminar este gasto fijo?")) {
+                guardarSnapshot();
+                const nombre = finanzas.gastosSemanalesFijos[index].concepto;
+                finanzas.gastosSemanalesFijos.splice(index, 1);
+                registrarAccion(`Gasto básico eliminado: ${nombre}`);
+                openModal('editar_fijos', null); 
+            }
+        }
+        window.agregarFijo = function() {
+            const nombre = document.getElementById('nuevoFijoNombre').value;
+            const monto = parseFloat(document.getElementById('nuevoFijoMonto').value);
+            if(nombre && !isNaN(monto) && monto > 0) {
+                guardarSnapshot();
+                finanzas.gastosSemanalesFijos.push({ concepto: nombre, monto: monto });
+                registrarAccion(`Gasto básico agregado: ${nombre} por ${formatC(monto)}`);
+                openModal('editar_fijos', null);
+            } else { alert("Por favor, ingresa un nombre y monto válido."); }
+        }
+        window.toggleEditFijo = function(index) {
+            const conceptoInput = document.getElementById(`fijoConcepto-${index}`);
+            const montoInput = document.getElementById(`fijoMonto-${index}`);
+            const editButton = document.getElementById(`editFijoBtn-${index}`);
+
+            if (conceptoInput.disabled) { 
+                conceptoInput.disabled = false;
+                montoInput.disabled = false;
+                editButton.textContent = 'Guardar';
+                editButton.classList.remove('text-blue-500');
+                editButton.classList.add('text-green-500');
+            } else { 
+                const nuevoConcepto = conceptoInput.value;
+                const nuevoMonto = parseFloat(montoInput.value);
+
+                if (nuevoConcepto && !isNaN(nuevoMonto) && nuevoMonto > 0) {
+                    guardarSnapshot();
+                    finanzas.gastosSemanalesFijos[index].concepto = nuevoConcepto;
+                    finanzas.gastosSemanalesFijos[index].monto = nuevoMonto;
+                    conceptoInput.disabled = true;
+                    montoInput.disabled = true;
+                    editButton.textContent = 'Editar';
+                    editButton.classList.remove('text-green-500');
+                    editButton.classList.add('text-blue-500');
+                    registrarAccion(`Gasto básico modificado a: ${nuevoConcepto} por ${formatC(nuevoMonto)}`);
+                } else {
+                    alert("Por favor, ingresa un concepto y un monto válido.");
+                }
+            }
+        }
+        window.deleteMsiItem = function(cardId, msiIndex) {
+            const card = finanzas.plataformas.find(p => p.id === cardId);
+            const item = card.cuentas.credito.msi[msiIndex];
+            if (confirm(`¿Eliminar la mensualidad de "${item.concepto}"?`)) {
+                guardarSnapshot();
+                card.cuentas.credito.msi.splice(msiIndex, 1);
+                registrarAccion(`Se borró la deuda a MSI en ${card.nombre}: ${item.concepto}`);
+                openModal('detalle_msi', cardId); 
+            }
+        }
+        window.deleteTransaction = function(cardId, txIndex) {
+            const card = finanzas.plataformas.find(p => p.id === cardId);
+            const item = card.cuentas.credito.transacciones[txIndex];
+            if (confirm(`¿Eliminar este registro del historial?`)) {
+                guardarSnapshot();
+                card.cuentas.credito.transacciones.splice(txIndex, 1);
+                registrarAccion(`Se borró el gasto del historial en ${card.nombre}: ${item.concepto}`);
+                openModal('detalle', cardId); 
+            }
+        }
+        function resetGastosSemana() {
+            if(confirm("¿Iniciar nueva semana? Esto reseteará tu dinero libre disponible.")) {
+                guardarSnapshot();
+                finanzas.gastosEspontaneosSemana = 0;
+                registrarAccion("Presupuesto semanal reiniciado.");
+            }
+        }
+        function editIngreso() {
+            let nuevo = prompt("Ingreso semanal:", finanzas.ingresoSemanal);
+            if (nuevo && !isNaN(nuevo)) { 
+                guardarSnapshot();
+                finanzas.ingresoSemanal = parseFloat(nuevo); 
+                registrarAccion(`Ingreso semanal configurado a ${formatC(finanzas.ingresoSemanal)}`);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initFirebase();
+        });
+    </script>
+</body>
+</html>
