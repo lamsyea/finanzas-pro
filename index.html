@@ -273,6 +273,12 @@
             reader.readAsText(file);
         }
 
+        // --- FUNCION AUXILIAR PARA OBTENER TARJETA SIN IMPORTAR MAYUSCULAS ---
+        function getCard(id) {
+            if (!id) return null;
+            return finanzas.plataformas.find(p => p.id.toLowerCase() === String(id).toLowerCase());
+        }
+
         // --- IA GEMINI INTEGRATION ---
         function configurarAPIKey() {
             let actual = localStorage.getItem('geminiApiKey') || '';
@@ -315,7 +321,7 @@
                 - Gastar de efectivo físico: {"action": "gasto_efectivo", "monto": N, "concepto": "X"}
                 - Depositar a Débito: {"action": "deposito_debito", "tarjeta_id": "ID", "monto": N}
                 - Depositar a Meli: {"action": "deposito_meli", "tarjeta_id": "ID", "monto": N}
-                - Transferir (entre cuentas): {"action": "transferencia", "origen_tipo": "TIPO", "origen_id": "ID", "destino_tipo": "TIPO", "destino_id": "ID", "monto": N} (Si es desde/hacia efectivo físico usa "origen_id":"efectivo")
+                - Transferir (entre cuentas): {"action": "transferencia", "origen_tipo": "TIPO", "origen_id": "ID", "destino_tipo": "TIPO", "destino_id": "ID", "monto": N} (Si es desde/hacia efectivo físico usa ID "efectivo" y TIPO "efectivo")
                 - Gastar con tarjeta Crédito: {"action": "gasto_credito", "tarjeta_id": "ID", "monto": N, "concepto": "X"}
                 - Compra a MSI: {"action": "compra_msi", "tarjeta_id": "ID", "monto": N, "concepto": "X", "meses": N}
                 - Pagar deuda de tarjeta de crédito: {"action": "pago_deuda", "tarjeta_id": "ID_CREDITO_A_PAGAR", "origen_tipo": "TIPO_FONDOS", "origen_id": "ID_FONDOS", "monto": N}
@@ -338,7 +344,9 @@
                 const data = await response.json();
                 if(data.error) throw new Error(data.error.message);
 
-                const jsonStr = data.candidates[0].content.parts[0].text;
+                let jsonStr = data.candidates[0].content.parts[0].text;
+                // Limpieza en caso de que la IA responda con código Markdown
+                jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
                 let actions = JSON.parse(jsonStr);
                 
                 ejecutarAccionesIA(actions);
@@ -369,25 +377,34 @@
                         descripciones.push(`IA: Gasto en efectivo (${act.concepto}) por ${formatC(act.monto)}.`);
                     } 
                     else if (act.action === 'deposito_debito') {
-                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
-                        card.cuentas.debito.balance += act.monto;
-                        descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Débito de ${card.nombre}.`);
+                        let card = getCard(act.tarjeta_id);
+                        if(card) {
+                            card.cuentas.debito.balance += act.monto;
+                            descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Débito de ${card.nombre}.`);
+                        } else throw new Error("Tarjeta no encontrada: " + act.tarjeta_id);
                     } 
                     else if (act.action === 'deposito_meli') {
-                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
-                        card.cuentas.meliDolar.balance += act.monto;
-                        descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Meli Dólar de ${card.nombre}.`);
+                        let card = getCard(act.tarjeta_id);
+                        if (card) {
+                            card.cuentas.meliDolar.balance += act.monto;
+                            descripciones.push(`IA: Depósito de ${formatC(act.monto)} en Meli Dólar de ${card.nombre}.`);
+                        } else throw new Error("Tarjeta no encontrada");
                     } 
                     else if (act.action === 'transferencia') {
-                        if(act.origen_tipo === 'efectivo') finanzas.efectivoEnMano -= act.monto;
-                        else {
-                            let cardOrig = finanzas.plataformas.find(p => p.id === act.origen_id);
+                        // Descuento en origen
+                        if(act.origen_tipo === 'efectivo' || act.origen_id === 'efectivo') {
+                            finanzas.efectivoEnMano -= act.monto;
+                        } else {
+                            let cardOrig = getCard(act.origen_id);
                             if(act.origen_tipo === 'debito') cardOrig.cuentas.debito.balance -= act.monto;
                             else if(act.origen_tipo === 'meli') cardOrig.cuentas.meliDolar.balance -= act.monto;
                         }
-                        if(act.destino_tipo === 'efectivo') finanzas.efectivoEnMano += act.monto;
-                        else {
-                            let cardDest = finanzas.plataformas.find(p => p.id === act.destino_id);
+                        
+                        // Abono en destino
+                        if(act.destino_tipo === 'efectivo' || act.destino_id === 'efectivo') {
+                            finanzas.efectivoEnMano += act.monto;
+                        } else {
+                            let cardDest = getCard(act.destino_id);
                             if(act.destino_tipo === 'debito') cardDest.cuentas.debito.balance += act.monto;
                             else if(act.destino_tipo === 'meli') cardDest.cuentas.meliDolar.balance += act.monto;
                             else if(act.destino_tipo === 'credito') applyPaymentToCredit(cardDest, act.monto);
@@ -395,28 +412,34 @@
                         descripciones.push(`IA: Transferencia de ${formatC(act.monto)}.`);
                     } 
                     else if (act.action === 'gasto_credito') {
-                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
-                        card.cuentas.credito.transacciones.push({ concepto: act.concepto, monto: act.monto });
-                        card.cuentas.credito.gastosPostCorte += act.monto;
-                        finanzas.gastosEspontaneosSemana += act.monto; 
-                        descripciones.push(`IA: Gasto de ${formatC(act.monto)} en ${card.nombre} (${act.concepto}).`);
+                        let card = getCard(act.tarjeta_id);
+                        if (card) {
+                            card.cuentas.credito.transacciones.push({ concepto: act.concepto, monto: act.monto });
+                            card.cuentas.credito.gastosPostCorte += act.monto;
+                            finanzas.gastosEspontaneosSemana += act.monto; 
+                            descripciones.push(`IA: Gasto de ${formatC(act.monto)} en ${card.nombre} (${act.concepto}).`);
+                        } else throw new Error("Tarjeta no encontrada");
                     } 
                     else if (act.action === 'compra_msi') {
-                        let card = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
-                        const mensualidad = act.monto / act.meses;
-                        card.cuentas.credito.transacciones.push({ concepto: `${act.concepto} (${act.meses} MSI)`, monto: act.monto });
-                        card.cuentas.credito.msi.push({ concepto: act.concepto, mensualidad: mensualidad, mesesRestantes: act.meses });
-                        card.cuentas.credito.gastosPostCorte += (act.monto - mensualidad);
-                        descripciones.push(`IA: Compra a ${act.meses} MSI en ${card.nombre} por ${formatC(act.monto)}.`);
+                        let card = getCard(act.tarjeta_id);
+                        if (card) {
+                            const mensualidad = act.monto / act.meses;
+                            // Se registra como compra nueva (asume 0 pagos previos)
+                            card.cuentas.credito.transacciones.push({ concepto: `${act.concepto} (${act.meses} MSI)`, monto: act.monto });
+                            card.cuentas.credito.msi.push({ concepto: act.concepto, mensualidad: mensualidad, mesesRestantes: act.meses - 1 });
+                            card.cuentas.credito.gastosPostCorte += mensualidad; // Se cobra la 1era mensualidad al momento
+                            descripciones.push(`IA: Compra a ${act.meses} MSI en ${card.nombre} por ${formatC(act.monto)}.`);
+                        } else throw new Error("Tarjeta no encontrada");
                     } 
                     else if (act.action === 'pago_deuda') {
-                        if(act.origen_tipo === 'efectivo') finanzas.efectivoEnMano -= act.monto;
-                        else {
-                            let cardOrig = finanzas.plataformas.find(p => p.id === act.origen_id);
+                        if(act.origen_tipo === 'efectivo' || act.origen_id === 'efectivo') {
+                            finanzas.efectivoEnMano -= act.monto;
+                        } else {
+                            let cardOrig = getCard(act.origen_id);
                             if(act.origen_tipo === 'debito') cardOrig.cuentas.debito.balance -= act.monto;
                             else if(act.origen_tipo === 'meli') cardOrig.cuentas.meliDolar.balance -= act.monto;
                         }
-                        let cardDest = finanzas.plataformas.find(p => p.id === act.tarjeta_id);
+                        let cardDest = getCard(act.tarjeta_id);
                         applyPaymentToCredit(cardDest, act.monto);
                         descripciones.push(`IA: Abono a deuda de ${cardDest.nombre} por ${formatC(act.monto)}.`);
                     }
@@ -700,7 +723,9 @@
 
                 title = `Transferir desde ${card.nombre} (${accountName})`;
 
-                let destOptions = '';
+                // Se añade "Efectivo" como opción para transferir hacia efectivo físico
+                let destOptions = `<option value="efectivo_efectivo">💵 Efectivo Físico</option>`;
+                
                 finanzas.plataformas.forEach(p => {
                     if (p.cuentas.debito && `${p.id}_debito` !== cardId) destOptions += `<option value="${p.id}_debito">💳 ${p.nombre} (Débito)</option>`;
                     if (p.cuentas.meliDolar && `${p.id}_meli` !== cardId) destOptions += `<option value="${p.id}_meli">💲 ${p.nombre} (Meli Dólar)</option>`;
@@ -810,12 +835,28 @@
             else if (type === 'msi') {
                 title = `Nueva compra a MSI en ${card.nombre}`;
                 inputs = `
-                    <input type="text" id="inputConcepto" placeholder="Concepto (Ej. Laptop)" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
-                    <input type="number" id="inputMonto" placeholder="Costo Total" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
-                    <select id="inputMeses" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600">
-                        <option value="3">3 Meses</option><option value="6">6 Meses</option><option value="9">9 Meses</option>
-                        <option value="12">12 Meses</option><option value="18">18 Meses</option><option value="24">24 Meses</option>
-                    </select>`;
+                    <label class="block text-xs font-bold text-gray-300 mb-1">Concepto o Producto:</label>
+                    <input type="text" id="inputConcepto" placeholder="Ej. Laptop" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                    
+                    <label class="block text-xs font-bold text-gray-300 mb-1">Costo Total:</label>
+                    <input type="number" id="inputMonto" placeholder="Ej. 12000" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                    
+                    <label class="block text-xs font-bold text-gray-300 mb-1">Plazo de meses:</label>
+                    <select id="inputMeses" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-3">
+                        <option value="3">3 Meses</option>
+                        <option value="4">4 Meses</option>
+                        <option value="5">5 Meses</option>
+                        <option value="6">6 Meses</option>
+                        <option value="9">9 Meses</option>
+                        <option value="12">12 Meses</option>
+                        <option value="18">18 Meses</option>
+                        <option value="24">24 Meses</option>
+                    </select>
+
+                    <label class="block text-xs font-bold text-gray-300 mb-1">Pagos ya realizados (Opcional):</label>
+                    <input type="number" id="inputPagosRealizados" placeholder="Déjalo en 0 si es compra nueva" value="0" class="w-full p-3 border rounded bg-gray-800 text-white border-gray-600 mb-1">
+                    <p class="text-[10px] text-gray-500 mb-2">Si ya pagaste meses anteriores de esta compra, anota cuántos. Esto evitará que se te vuelva a cobrar en tu balance de esta semana.</p>
+                `;
             }
             else if (type === 'detalle') {
                 title = `Historial de ${card.nombre}`;
@@ -963,20 +1004,25 @@
 
                 const destBaseId = destId.split('_')[0];
                 const destSubType = destId.split('_')[1]; 
-                const destCard = finanzas.plataformas.find(p => p.id === destBaseId);
                 const sourceName = sourceSubType === 'meli' ? `${card.nombre} (Meli Dólar)` : `${card.nombre} (Débito)`;
 
-                if (destSubType === 'debito') {
-                    destCard.cuentas.debito.balance += monto;
-                    registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Débito de ${destCard.nombre}.`);
-                }
-                else if (destSubType === 'meli') {
-                    destCard.cuentas.meliDolar.balance += monto;
-                    registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Meli Dólar de ${destCard.nombre}.`);
-                }
-                else if (destSubType === 'credito') {
-                    applyPaymentToCredit(destCard, monto);
-                    registrarAccion(`Pago de deuda por ${formatC(monto)} a ${destCard.nombre} con fondos de ${sourceName}.`);
+                if (destBaseId === 'efectivo') {
+                    finanzas.efectivoEnMano += monto;
+                    registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Efectivo Físico.`);
+                } else {
+                    const destCard = finanzas.plataformas.find(p => p.id === destBaseId);
+                    if (destSubType === 'debito') {
+                        destCard.cuentas.debito.balance += monto;
+                        registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Débito de ${destCard.nombre}.`);
+                    }
+                    else if (destSubType === 'meli') {
+                        destCard.cuentas.meliDolar.balance += monto;
+                        registrarAccion(`Transferencia de ${formatC(monto)} desde ${sourceName} hacia Meli Dólar de ${destCard.nombre}.`);
+                    }
+                    else if (destSubType === 'credito') {
+                        applyPaymentToCredit(destCard, monto);
+                        registrarAccion(`Pago de deuda por ${formatC(monto)} a ${destCard.nombre} con fondos de ${sourceName}.`);
+                    }
                 }
             }
             else if (modalActionType === 'pagar') {
@@ -1055,15 +1101,28 @@
                 }
                 else if (modalActionType === 'msi') {
                     let concepto = document.getElementById('inputConcepto').value || 'Compra a MSI';
-                    const meses = parseInt(document.getElementById('inputMeses').value);
-                    const mensualidad = monto / meses;
+                    const mesesTotales = parseInt(document.getElementById('inputMeses').value);
+                    const pagosYaHechos = parseInt(document.getElementById('inputPagosRealizados').value) || 0;
+                    
+                    const mensualidad = monto / mesesTotales;
                     let c = card.cuentas.credito;
+                    
+                    let mesesRestantes = mesesTotales - pagosYaHechos;
+                    if (mesesRestantes < 0) mesesRestantes = 0;
 
-                    c.transacciones.push({ concepto: `${concepto} (${meses} MSI)`, monto: monto });
-                    c.msi.push({ concepto: concepto, mensualidad: mensualidad, mesesRestantes: meses });
-                    c.gastosPostCorte += (monto - mensualidad);
+                    let etiquetaPagos = pagosYaHechos > 0 ? ` (Ya se pagaron ${pagosYaHechos})` : '';
+                    c.transacciones.push({ concepto: `${concepto} (${mesesTotales} MSI)${etiquetaPagos}`, monto: monto });
 
-                    registrarAccion(`Compra a ${meses} MSI en ${card.nombre}: ${concepto} por ${formatC(monto)}.`);
+                    if (pagosYaHechos === 0 && mesesRestantes > 0) {
+                        // Es una compra completamente nueva. Se le cobra la primera mensualidad de inmediato.
+                        c.msi.push({ concepto: concepto, mensualidad: mensualidad, mesesRestantes: mesesRestantes - 1 });
+                        c.gastosPostCorte += mensualidad;
+                    } else if (mesesRestantes > 0) {
+                        // Ya traía pagos hechos, no sumamos la mensualidad a los gastos actuales, solo enfilamos la deuda.
+                        c.msi.push({ concepto: concepto, mensualidad: mensualidad, mesesRestantes: mesesRestantes });
+                    }
+
+                    registrarAccion(`Compra a ${mesesTotales} MSI en ${card.nombre}: ${concepto} por ${formatC(monto)}.`);
                 }
             }
             closeModal();
